@@ -4,8 +4,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.perceivedev</groupId>
-        <artifactId>PerceiveCore</artifactId>
+        <groupId>me.ialistannen</groupId>
+        <artifactId>BukkitUtilities</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 

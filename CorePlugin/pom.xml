@@ -4,8 +4,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <artifactId>PerceiveCore</artifactId>
-        <groupId>com.perceivedev</groupId>
+        <artifactId>BukkitUtilities</artifactId>
+        <groupId>me.ialistannen</groupId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
@@ -13,13 +13,13 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.perceivedev</groupId>
+            <groupId>me.ialistannen</groupId>
             <artifactId>ModuleSystem</artifactId>
             <version>1.0.0-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>com.perceivedev</groupId>
+            <groupId>me.ialistannen</groupId>
             <artifactId>Utilities</artifactId>
             <version>1.0.0-SNAPSHOT</version>
             <scope>compile</scope>
@@ -33,10 +33,10 @@
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>2.4.3</version>
                 <configuration>
-                    <finalName>PerceiveCore</finalName>
+                    <finalName>BukkitUtilities</finalName>
                     <artifactSet>
                         <includes>
-                            <include>com.perceivedev:ModuleSystem</include>
+                            <include>me.ialistannen:ModuleSystem</include>
                         </includes>
                     </artifactSet>
                 </configuration>
