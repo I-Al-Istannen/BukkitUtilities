@@ -1,946 +1,903 @@
 package me.ialistannen.bukkitutilities.utilities.text;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
+import java.io.IOException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
+import org.apache.commons.lang3.StringEscapeUtils;
+import org.apache.commons.lang3.Validate;
+import org.bukkit.Achievement;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Statistic;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 
-import com.google.common.base.Strings;
-import com.google.common.collect.BiMap;
-import com.google.common.collect.ImmutableBiMap;
-import com.google.gson.JsonArray;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSerializationContext;
+import com.google.gson.JsonSerializer;
+import com.google.gson.TypeAdapter;
+import com.google.gson.TypeAdapterFactory;
+import com.google.gson.reflect.TypeToken;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+
+import me.ialistannen.bukkitutilities.nbt.NBTWrappers.NBTTagCompound;
+import me.ialistannen.bukkitutilities.reflection.ReflectionUtil;
+import me.ialistannen.bukkitutilities.reflection.ReflectionUtil.MethodPredicate;
+
+import static me.ialistannen.bukkitutilities.reflection.ReflectionUtil.NameSpace.NMS;
+import static me.ialistannen.bukkitutilities.reflection.ReflectionUtil.NameSpace.OBC;
+import static me.ialistannen.bukkitutilities.utilities.text.TextUtils.enumFormat;
 
 /**
- * This is a complete JSON message builder class. To create a new JSONMessage
- * do
- * {@link #create(String)}
- *
- * @author Rayzr
+ * A class to deal with JSON Messages
  */
 public class JSONMessage {
 
-    private static final BiMap<ChatColor, String> STYLES_TO_NAMES;
+    private static Class<?> CRAFT_ITEM_STACK = ReflectionUtil.getClass(OBC, "inventory.CraftItemStack")
+            .orElseThrow(() -> new RuntimeException("Could not find the 'CraftItemStack' class"));
+    private static Method AS_NMS_COPY = ReflectionUtil.getMethod(
+            CRAFT_ITEM_STACK,
+            new MethodPredicate().withName("asNMSCopy")
+    ).getValueOrThrow("Could not find the 'asNMSCopy' method");
+    private static Class<?> NMS_ITEM_STACK = ReflectionUtil.getClass(NMS, "ItemStack")
+            .orElseThrow(() -> new RuntimeException("Could not find the nms 'ItemStack' class"));
+    private static Method SAVE = ReflectionUtil.getMethod(NMS_ITEM_STACK, new MethodPredicate().withName("save"))
+            .getValueOrThrow("Could not find the 'save' method");
 
-    static {
-        ImmutableBiMap.Builder<ChatColor, String> builder = ImmutableBiMap.builder();
-        for (final ChatColor style : ChatColor.values()) {
-            if (!style.isFormat()) {
-                continue;
+    private static Gson GSON = new GsonBuilder()
+            .disableHtmlEscaping()
+            .setPrettyPrinting()
+            .registerTypeAdapter(HoverEvent.class, new HoverEventSerializer())
+            .registerTypeAdapter(ChatColor.class, new EnumSerializer<>(tEnum -> tEnum.name().toLowerCase()))
+            .registerTypeAdapter(HoverAction.class, new EnumSerializer<>())
+            .registerTypeAdapter(ClickAction.class, new EnumSerializer<>())
+            .registerTypeAdapterFactory(
+                    new AnonymousClassesFactory<>(
+                            ChatColor.class,
+                            (gson, typeToken) -> new EnumSerializer<>(tEnum -> tEnum.name().toLowerCase())
+                    )
+            )
+            .create();
+
+    /**
+     * @return A new empty {@link MessageBuilder}
+     */
+    @SuppressWarnings("unused")
+    public static MessageBuilder create() {
+        return new MessageBuilder();
+    }
+
+    /**
+     * @param initial The initial text
+     *
+     * @return A new empty {@link MessageBuilder}
+     */
+    @SuppressWarnings("unused")
+    public static MessageBuilder create(String initial) {
+        return new MessageBuilder().text(initial);
+    }
+
+    /**
+     * A finished JSON message
+     */
+    public static class BuiltJsonMessage {
+        private MessageBuilder builder;
+
+        BuiltJsonMessage(MessageBuilder builder) {
+            this.builder = builder;
+        }
+
+        /**
+         * @return The JSON String
+         */
+        @SuppressWarnings("unused")
+        public String getJson() {
+            String s = GSON.toJson(builder.parts);
+            // **** You gson. I do not care about script tags!
+            s = s.replace("\\\\/", "/");
+            // **** you minecraft. Why do you use some invalid json monstrosity?
+            s = StringEscapeUtils.unescapeJson(s);
+            return s;
+        }
+
+        /**
+         * Sends the message to all the specified players
+         *
+         * @param players The Players to send it to
+         */
+        @SuppressWarnings("unused")
+        public void send(Player... players) {
+            String json = getJson();
+            for (Player player : players) {
+                Bukkit.dispatchCommand(
+                        Bukkit.getConsoleSender(),
+                        "tellraw " + player.getName() + " " + json
+                );
             }
-
-            String styleName;
-            switch (style) {
-                case MAGIC:
-                    styleName = "obfuscated";
-                    break;
-                case UNDERLINE:
-                    styleName = "underlined";
-                    break;
-                default:
-                    styleName = style.name().toLowerCase();
-                    break;
-            }
-
-            builder.put(style, styleName);
         }
-        STYLES_TO_NAMES = builder.build();
-    }
-
-    private List<MessagePart> parts = new ArrayList<>();
-
-    /**
-     * Creates a new JSONMessage object
-     *
-     * @param text The text to start with
-     */
-    private JSONMessage(String text) {
-        parts.add(new MessagePart(text));
     }
 
     /**
-     * Creates a new JSONMessage object
-     *
-     * @param text The text to start with
-     *
-     * @return A new {@link JSONMessage} instance
+     * A Builder for Json messages
      */
-    @SuppressWarnings("WeakerAccess")
-    public static JSONMessage create(String text) {
-        return new JSONMessage(text);
-    }
+    public static class MessageBuilder {
+        private List<MessagePart> parts = new ArrayList<>();
+        private MessagePart current = new MessagePart();
 
-    /**
-     * Creates a new JSONMessage object with an empty String as the text
-     *
-     * @return A new {@link JSONMessage} instance
-     */
-    @SuppressWarnings("unused")
-    public static JSONMessage create() {
-        return create("");
-    }
-
-    /**
-     * Sends an action bar message
-     *
-     * @param message The message to send (using legacy formatting)
-     * @param players The players you want to send it to
-     */
-    @SuppressWarnings("WeakerAccess")
-    public static void actionbar(String message, Player... players) {
-
-        ReflectionHelper.sendPacket(ReflectionHelper.createActionbarPacket(ChatColor.translateAlternateColorCodes
-                ('&', message)), players);
-
-    }
-
-    /**
-     * @return The latest {@link MessagePart}
-     *
-     * @throws ArrayIndexOutOfBoundsException If {@code parts.size() <= 0}.
-     */
-    @SuppressWarnings("WeakerAccess")
-    public MessagePart last() {
-        if (parts.size() <= 0) {
-            throw new ArrayIndexOutOfBoundsException("No MessageParts exist!");
+        /**
+         * Adds an empty text part
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder addEmpty() {
+            MessagePart empty = new MessagePart();
+            empty.text = "";
+            parts.add(empty);
+            return this;
         }
-        return parts.get(parts.size() - 1);
-    }
 
-    /**
-     * Converts this JSONMessage instance to actual JSON
-     *
-     * @return The JSON representation of this JSONMessage
-     */
-    @SuppressWarnings("WeakerAccess")
-    public JsonObject toJSON() {
-
-        JsonObject obj = new JsonObject();
-
-        obj.addProperty("text", "");
-
-        JsonArray array = new JsonArray();
-        for (MessagePart part : parts) {
-            array.add(part.toJSON());
+        /**
+         * Adds this component and switches to the next
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("WeakerAccess")
+        public MessageBuilder next() {
+            parts.add(current);
+            current = new MessagePart();
+            return this;
         }
-        obj.add("extra", array);
 
-        return obj;
-    }
-
-    /**
-     * Converts this JSONMessage object to a String representation of the JSON.
-     * This is an alias of {@code toJSON().toString()}.
-     *
-     * @return A String of the JSON of this JSONMessage
-     */
-    @Override
-    public String toString() {
-        return toJSON().toString();
-    }
-
-    /**
-     * Converts this JSONMessage object to the legacy formatting system, which
-     * uses formatting codes (like {@code &6, &l, &4}, etc.)
-     *
-     * @return This JSONMessage using legacy formatting
-     */
-    @SuppressWarnings("WeakerAccess")
-    public String toLegacy() {
-        StringBuilder output = new StringBuilder();
-        for (MessagePart part : parts) {
-            output.append(part.toLegacy());
+        /**
+         * Adds this component and switches to the next. Then adds the given text
+         *
+         * @param text The initial test
+         *
+         * @return This builder
+         *
+         * @see #next()
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder next(String text) {
+            return next().text(text);
         }
-        return output.toString();
+
+        /**
+         * Adds a message inheriting the formatting of the current one
+         *
+         * @param extra The extra message
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder extra(BuiltJsonMessage extra) {
+            current.addExtras(extra.builder.parts);
+            return this;
+        }
+
+        /**
+         * Adds the given text
+         *
+         * @param text The text to add
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("WeakerAccess")
+        public MessageBuilder text(String text) {
+            current.setText(text);
+            return this;
+        }
+
+        /**
+         * Adds a selector (like {@code "@p"}). It will be evaluated and replaced with the result
+         *
+         * @param selector The selector to add.
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder selector(String selector) {
+            current.setSelector(selector);
+            return this;
+        }
+
+        /**
+         * Adds a value that will be replaced by the given scoreboard objective
+         *
+         * @param score The score to add
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder score(Score score) {
+            current.setScore(score);
+            return this;
+        }
+
+        /**
+         * Sets the color of the part
+         *
+         * @param chatColor The color of the message
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder color(ChatColor chatColor) {
+            Validate.isTrue(chatColor.isColor(), "chatColor must be a color, not a format!");
+            current.setColor(chatColor);
+            return this;
+        }
+
+        /**
+         * @param underline Whether it should be underlined
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder underlined(boolean underline) {
+            current.setUnderlined(underline);
+            return this;
+        }
+
+        /**
+         * @param bold Whether it should be bold
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder bold(boolean bold) {
+            current.setBold(bold);
+            return this;
+        }
+
+        /**
+         * @param obfuscated Whether it should be obfuscated (or magic)
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder obfuscated(boolean obfuscated) {
+            current.setObfuscated(obfuscated);
+            return this;
+        }
+
+        /**
+         * @param italic Whether it will be italic
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder italic(boolean italic) {
+            current.setItalic(italic);
+            return this;
+        }
+
+        /**
+         * Specifies the text to insert upon clicking with SHIFT+LEFT
+         *
+         * @param insertion The text to insert
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder insertion(String insertion) {
+            current.setInsertion(insertion);
+            return this;
+        }
+
+        /**
+         * Translates a minecraft message (like "multiplayer.player.joined", which takes ONE argument)
+         *
+         * @param translate The key to the message to replace
+         * @param with The replacements
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public MessageBuilder translate(String translate, String... with) {
+            current.setTranslate(translate);
+            current.setWith(with);
+            return this;
+        }
+
+        /**
+         * @return A builder for the Hover event
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder hover() {
+            return new HoverEventBuilder(this);
+        }
+
+        void setHover(HoverEvent hoverEvent) {
+            current.setHoverEvent(hoverEvent);
+        }
+
+        /**
+         * @return A builder for the Click event
+         */
+        @SuppressWarnings("unused")
+        public ClickEventBuilder click() {
+            return new ClickEventBuilder(this);
+        }
+
+        void setClick(ClickEvent clickEvent) {
+            current.setClickEvent(clickEvent);
+        }
+
+        /**
+         * Builds this message
+         *
+         * @return A built message
+         */
+        public BuiltJsonMessage build() {
+            parts.add(current);
+            return new BuiltJsonMessage(this);
+        }
     }
 
     /**
-     * Sends this JSONMessage to all the players specified
-     *
-     * @param players the players you want to send this to
+     * A score
      */
+    public static class Score {
+        @SuppressWarnings("unused")
+        private String name, objective, value;
+
+        Score(String name, String objective, String value) {
+            this.name = name;
+            this.objective = objective;
+            this.value = value;
+        }
+
+        /**
+         * Creates a score for a player and an objective
+         *
+         * @param name The name of the entity. May be a selector
+         * @param objective The objective to use
+         *
+         * @return The Score
+         */
+        public static Score of(String name, String objective) {
+            return new Score(name, objective, null);
+        }
+
+        /**
+         * Creates a score for a player and an objective
+         *
+         * @param name The name of the entity. May be a selector
+         * @param objective The objective to use
+         * @param value The value of the score
+         *
+         * @return The Score
+         */
+        public static Score of(String name, String objective, int value) {
+            return new Score(name, objective, Integer.toString(value));
+        }
+
+        /**
+         * Creates a score for a player and an objective
+         *
+         * @param name The name of the entity. May be a selector
+         * @param objective The objective to use
+         * @param value The value of the score
+         *
+         * @return The Score
+         */
+        public static Score of(String name, String objective, String value) {
+            return new Score(name, objective, value);
+        }
+    }
+
+    /**
+     * A Builder for a hover event
+     */
+    public static class HoverEventBuilder {
+        private MessageBuilder source;
+        private HoverEvent event = new HoverEvent();
+
+        HoverEventBuilder(MessageBuilder source) {
+            this.source = source;
+        }
+
+        /**
+         * @param text The text to display
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayText(String text) {
+            event.displayText(text);
+            return this;
+        }
+
+        /**
+         * @param message The text to display
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayText(BuiltJsonMessage message) {
+            event.displayText(message.builder.parts);
+            return this;
+        }
+
+        /**
+         * Displays an Entity popup
+         *
+         * @param name The name of the entity
+         * @param type The type of the entity
+         * @param id The id of the entity
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayEntity(String name, String type, String id) {
+            event.displayEntity(name, type, id);
+            return this;
+        }
+
+        /**
+         * Displays an Achievement in a popup
+         *
+         * @param achievement The {@link Achievement} to display
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayAchievement(Achievement achievement) {
+            event.displayAchievement(achievement);
+            return this;
+        }
+
+        /**
+         * Displays a statistic in a popup
+         *
+         * @param statistic The {@link Statistic} to display
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayStatistic(Statistic statistic) {
+            event.displayStatistic(statistic);
+            return this;
+        }
+
+        /**
+         * Displays an item in a popup
+         *
+         * @param itemStack The item to display
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public HoverEventBuilder displayItem(ItemStack itemStack) {
+            event.displayItem(itemStack);
+            return this;
+        }
+
+        /**
+         * Builds this event
+         *
+         * @return The original {@link MessageBuilder}
+         */
+        public MessageBuilder build() {
+            source.setHover(event);
+            return source;
+        }
+    }
+
+    /**
+     * A Builder for click events
+     */
+    public static class ClickEventBuilder {
+        private MessageBuilder source;
+        private ClickEvent clickEvent;
+
+        ClickEventBuilder(MessageBuilder source) {
+            this.source = source;
+            clickEvent = new ClickEvent();
+        }
+
+        /**
+         * Opens an URL on click
+         *
+         * @param url The url to open
+         *
+         * @return This Builder
+         */
+        @SuppressWarnings("unused")
+        public ClickEventBuilder openUrl(String url) {
+            clickEvent.openUrl(url);
+            return this;
+        }
+
+        /**
+         * Suggests a command
+         *
+         * @param command The command to suggest
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public ClickEventBuilder suggestCommand(String command) {
+            clickEvent.suggestCommand(command);
+            return this;
+        }
+
+        /**
+         * Runs a command when clicked
+         *
+         * @param command The command to run. Needs to start with a slash, or the user will chat the message
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public ClickEventBuilder runCommand(String command) {
+            clickEvent.runCommand(command);
+            return this;
+        }
+
+        /**
+         * Switches the page on click. Only for books.
+         *
+         * @param newPage The new page
+         *
+         * @return This builder
+         */
+        @SuppressWarnings("unused")
+        public ClickEventBuilder changePage(int newPage) {
+            clickEvent.changePage(newPage);
+            return this;
+        }
+
+        /**
+         * Builds this click event
+         *
+         * @return The original builder
+         */
+        public MessageBuilder build() {
+            source.setClick(clickEvent);
+            return source;
+        }
+    }
+
+    /**
+     * The click Action
+     */
+    private enum ClickAction {
+        RUN_COMMAND("run_command"),
+        SUGGEST_COMMAND("suggest_command"),
+        OPEN_URL("open_url"),
+        CHANGE_PAGE("change_page");
+
+        private String name;
+
+        ClickAction(String name) {
+            this.name = name;
+        }
+
+        /**
+         * @return The minecraft name of it
+         */
+        public String toString() {
+            return name;
+        }
+    }
+
+    /**
+     * The action for clicking on an Hover event
+     */
+    private enum HoverAction {
+        SHOW_TEXT("show_text"),
+        SHOW_ITEM("show_item"),
+        SHOW_ACHIEVEMENT("show_achievement"),
+        SHOW_ENTITY("show_entity");
+
+        private String name;
+
+        HoverAction(String name) {
+            this.name = name;
+        }
+
+        /**
+         * @return The minecraft name of it
+         */
+        public String toString() {
+            return name;
+        }
+    }
+
     @SuppressWarnings("unused")
-    public void send(Player... players) {
-        ReflectionHelper.sendPacket(ReflectionHelper.createTextPacket(toString()), players);
-    }
-
-    /**
-     * Sends this as a title to all the players specified
-     *
-     * @param fadeIn how many ticks to fade in
-     * @param stay how many ticks to stay
-     * @param fadeOut how many ticks to fade out
-     * @param players the players to send it to
-     */
-    @SuppressWarnings("unused")
-    public void title(int fadeIn, int stay, int fadeOut, Player... players) {
-        ReflectionHelper.sendPacket(ReflectionHelper.createTitleTimesPacket(fadeIn, stay, fadeOut), players);
-        ReflectionHelper.sendPacket(ReflectionHelper.createTitlePacket(toString()), players);
-    }
-
-    /**
-     * Sends this as a subtitle to all the players specified
-     *
-     * @param players the players to send it to
-     */
-    @SuppressWarnings("unused")
-    public void subtitle(Player... players) {
-        ReflectionHelper.sendPacket(ReflectionHelper.createSubtitlePacket(toString()), players);
-    }
-
-    /**
-     * Sends an action bar message
-     *
-     * @param players the players you want to send this to
-     */
-    @SuppressWarnings("unused")
-    public void actionbar(Player... players) {
-        actionbar(toLegacy(), players);
-    }
-
-    /**
-     * Sets the color of the current message part.
-     *
-     * @param color the color to set
-     *
-     * @return this
-     */
-    @SuppressWarnings("WeakerAccess")
-    public JSONMessage color(ChatColor color) {
-        last().setColor(color);
-        return this;
-    }
-
-    /**
-     * Adds a style to the current message part.
-     *
-     * @param style the style to add
-     *
-     * @return this
-     */
-    @SuppressWarnings("WeakerAccess")
-    public JSONMessage style(ChatColor style) {
-        last().addStyle(style);
-        return this;
-    }
-
-    /**
-     * Makes the text run a command.
-     *
-     * @param cmd the command to run
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage runCommand(String cmd) {
-        last().setOnClick(ClickEvent.runCommand(cmd));
-        return this;
-    }
-
-    /**
-     * Makes the text suggest a command.
-     *
-     * @param cmd the command to suggest
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage suggestCommand(String cmd) {
-        last().setOnClick(ClickEvent.suggestCommand(cmd));
-        return this;
-    }
-
-    /**
-     * Opens a URL.
-     *
-     * @param url the url to open
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage openURL(String url) {
-        last().setOnClick(ClickEvent.openURL(url));
-        return this;
-    }
-
-    /**
-     * Changes the page of a book. Using this in a non-book context is useless
-     * and will probably error.
-     *
-     * @param page the page to change to
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage changePage(int page) {
-        last().setOnClick(ClickEvent.changePage(page));
-        return this;
-    }
-
-    /**
-     * Shows text when you hover over it
-     *
-     * @param text the text to show
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage tooltip(String text) {
-        last().setOnHover(HoverEvent.showText(text));
-        return this;
-    }
-
-    /**
-     * Shows text when you hover over it
-     *
-     * @param message the text to show
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage tooltip(JSONMessage message) {
-        last().setOnHover(HoverEvent.showText(message));
-        return this;
-    }
-
-    /**
-     * Shows an achievement when you hover over it
-     *
-     * @param id the id of the achievement
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage achievement(String id) {
-        last().setOnHover(HoverEvent.showAchievement(id));
-        return this;
-    }
-
-    /**
-     * Adds another part to this JSONChat
-     *
-     * @param text the text to start with
-     *
-     * @return this
-     */
-    @SuppressWarnings("WeakerAccess")
-    public JSONMessage then(String text) {
-        return then(new MessagePart(text));
-    }
-
-    /**
-     * Adds another part to this JSONChat
-     *
-     * @param nextPart the next part
-     *
-     * @return this
-     */
-    @SuppressWarnings("WeakerAccess")
-    public JSONMessage then(MessagePart nextPart) {
-        parts.add(nextPart);
-        return this;
-    }
-
-    /**
-     * Adds a horizontal bar to the message of the given length
-     *
-     * @param length the length of the horizontal bar
-     *
-     * @return this
-     */
-    private JSONMessage bar(int length) {
-        return then(Strings.repeat("-", length)).color(ChatColor.DARK_GRAY).style(ChatColor.STRIKETHROUGH);
-    }
-
-    /**
-     * Adds a horizontal bar to the message that's 53 characters long. This is
-     * the default width of the player's chat window.
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage bar() {
-        return bar(53);
-    }
-
-    /**
-     * Adds a blank line to the message
-     *
-     * @return this
-     */
-    @SuppressWarnings("unused")
-    public JSONMessage newline() {
-        return then("\n");
-    }
-
-    // <editor-fold desc="Utility Classes">
-    ///////////////////////////
-    // BEGIN UTILITY CLASSES //
-    ///////////////////////////
-
-    // <editor-fold desc="MessagePart">
-
-    /**
-     * Defines a section of the message.
-     *
-     * @author Rayzr
-     */
-    public class MessagePart {
-
-        private MessageEvent onClick;
-        private MessageEvent onHover;
-        private List<ChatColor> styles = new ArrayList<>();
-        private ChatColor color;
+    private static class MessagePart {
         private String text;
+        private String translate;
+        private List<String> with;
+        private String selector;
+        private Score score;
+        private ChatColor color;
+        // use the object to inherit correctly (if it is null, it will not be appended by GSON)
+        private Boolean bold, italic, underlined, obfuscated;
+        private HoverEvent hoverEvent;
+        private ClickEvent clickEvent;
+        private String insertion;
+        @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+        private List<MessagePart> extra;
 
-        /**
-         * Creates a new {@link MessagePart} from the given text
-         *
-         * @param text the text of the message part
-         */
-        @SuppressWarnings("WeakerAccess")
-        public MessagePart(String text) {
-            this.text = text == null ? "null" : text;
-        }
-
-        /**
-         * @return This {@link MessagePart} in JSON form
-         */
-        @SuppressWarnings("WeakerAccess")
-        public JsonObject toJSON() {
-            Objects.requireNonNull(text, "text can not be null");
-
-            JsonObject obj = new JsonObject();
-            obj.addProperty("text", text);
-
-            if (color != null) {
-                obj.addProperty("color", color.name().toLowerCase());
-            }
-
-            for (ChatColor style : styles) {
-                obj.addProperty(STYLES_TO_NAMES.get(style), true);
-            }
-
-            if (onClick != null) {
-                obj.add("clickEvent", onClick.toJSON());
-            }
-
-            if (onHover != null) {
-                obj.add("hoverEvent", onHover.toJSON());
-            }
-
-            return obj;
-
-        }
-
-        /**
-         * @return This {@link MessagePart} in legacy format
-         */
-        @SuppressWarnings("WeakerAccess")
-        public String toLegacy() {
-            StringBuilder output = new StringBuilder();
-            if (color != null) {
-                output.append(color.toString());
-            }
-            for (ChatColor style : styles) {
-                output.append(style.toString());
-            }
-            return output.append(text).toString();
-        }
-
-        /**
-         * @return the onClick event
-         */
-        @SuppressWarnings("unused")
-        public MessageEvent getOnClick() {
-            return onClick;
-        }
-
-        /**
-         * @param onClick the onClick event to set
-         */
-        @SuppressWarnings("WeakerAccess")
-        public void setOnClick(MessageEvent onClick) {
-            this.onClick = onClick;
-        }
-
-        /**
-         * @return the onHover event
-         */
-        @SuppressWarnings("unused")
-        public MessageEvent getOnHover() {
-            return onHover;
-        }
-
-        /**
-         * @param onHover the onHover event to set
-         */
-        @SuppressWarnings("WeakerAccess")
-        public void setOnHover(MessageEvent onHover) {
-            this.onHover = onHover;
-        }
-
-        /**
-         * @return the color
-         */
-        @SuppressWarnings("unused")
-        public ChatColor getColor() {
-            return color;
-        }
-
-        /**
-         * @param color the color to set
-         */
-        @SuppressWarnings("WeakerAccess")
-        public void setColor(ChatColor color) {
-            if (!color.isColor()) {
-                throw new IllegalArgumentException(color.name() + " is not a color!");
-            }
-            this.color = color;
-        }
-
-        /**
-         * @return the styles
-         */
-        @SuppressWarnings("unused")
-        public List<ChatColor> getStyles() {
-            return styles;
-        }
-
-        /**
-         * Adds a style
-         *
-         * @param style the style to add
-         */
-        @SuppressWarnings("WeakerAccess")
-        public void addStyle(ChatColor style) {
-            if (style == null) {
-                throw new IllegalArgumentException("Style cannot be null!");
-            }
-            if (!style.isFormat()) {
-                throw new IllegalArgumentException(color.name() + " is not a style!");
-            }
-            styles.add(style);
-        }
-
-        /**
-         * @return the text
-         */
-        @SuppressWarnings("unused")
-        public String getText() {
-            return text;
-        }
-
-        /**
-         * @param text the text to set
-         */
-        @SuppressWarnings("unused")
-        public void setText(String text) {
+        void setText(String text) {
             this.text = text;
         }
 
-    }
-    // </editor-fold>
-
-    // <editor-fold desc="MessageEvent">
-    public static class MessageEvent {
-
-        private String action;
-        private Object value;
-
-        @SuppressWarnings("WeakerAccess")
-        public MessageEvent(String action, Object value) {
-
-            this.action = action;
-            this.value = value;
-
+        void setTranslate(String translate) {
+            this.translate = translate;
         }
 
+        void setWith(List<String> with) {
+            this.with = with;
+        }
+
+        void setWith(String... more) {
+            List<String> withList = new ArrayList<>(more.length);
+            Collections.addAll(withList, more);
+            setWith(withList);
+        }
+
+        void setSelector(String selector) {
+            this.selector = selector;
+        }
+
+        void setScore(Score score) {
+            this.score = score;
+        }
+
+        void setColor(ChatColor color) {
+            this.color = color;
+        }
+
+        void setBold(Boolean bold) {
+            this.bold = bold;
+        }
+
+        void setItalic(Boolean italic) {
+            this.italic = italic;
+        }
+
+        void setUnderlined(Boolean underlined) {
+            this.underlined = underlined;
+        }
+
+        void setObfuscated(Boolean obfuscated) {
+            this.obfuscated = obfuscated;
+        }
+
+        void setHoverEvent(HoverEvent hoverEvent) {
+            this.hoverEvent = hoverEvent;
+        }
+
+        void setClickEvent(ClickEvent clickEvent) {
+            this.clickEvent = clickEvent;
+        }
+
+        void setInsertion(String insertion) {
+            this.insertion = insertion;
+        }
+
+        void addExtras(Collection<MessagePart> part) {
+            extra.addAll(part);
+        }
+    }
+
+    private static class HoverEvent {
+        private HoverAction action;
+        private MessagePart[] value;
+        private String itemValue;
+
+        void displayItem(ItemStack item) {
+            action = HoverAction.SHOW_ITEM;
+
+            Object nmsItem = ReflectionUtil.invokeMethod(AS_NMS_COPY, null, item)
+                    .getValueOrThrow("Could not invoke 'asNMSCopy' method");
+            Object savedTag = ReflectionUtil.invokeMethod(SAVE, nmsItem, new NBTTagCompound().toNBT())
+                    .getValueOrThrow("Could not invoke 'save' method");
+
+            String string = savedTag.toString();
+            itemValue = StringEscapeUtils.escapeJson(string);
+        }
+
+        void displayText(String text) {
+            action = HoverAction.SHOW_TEXT;
+            MessagePart part = new MessagePart();
+            part.text = text;
+            value = new MessagePart[]{part};
+        }
+
+        void displayText(MessagePart[] text) {
+            action = HoverAction.SHOW_TEXT;
+            value = text;
+        }
+
+        void displayText(Collection<MessagePart> text) {
+            displayText(text.toArray(new MessagePart[text.size()]));
+        }
+
+        void displayEntity(String name, String type, String id) {
+            action = HoverAction.SHOW_ENTITY;
+
+            String escapedName = StringEscapeUtils.escapeJson(name);
+
+            String escapedType = StringEscapeUtils.escapeJson(type);
+            if (escapedType.matches(".+\\s.+")) {
+                escapedType = "\"" + escapedType + "\"";
+            }
+
+            String escapedId = StringEscapeUtils.escapeJson(id);
+            MessagePart part = new MessagePart();
+            part.text = "\"{name:" + escapedName + ",type:" + escapedType + ",id:" + escapedId + "}\"";
+            value = new MessagePart[]{part};
+        }
+
+        void displayAchievement(Achievement achievement) {
+            action = HoverAction.SHOW_ACHIEVEMENT;
+            String replace = enumFormat(achievement.name(), true).replace(" ", "");
+            replace = replace.substring(0, 1).toLowerCase() + replace.substring(1);
+            MessagePart part = new MessagePart();
+            part.text = "achievement." + replace;
+            value = new MessagePart[]{part};
+        }
+
+        void displayStatistic(Statistic statistic) {
+            action = HoverAction.SHOW_ACHIEVEMENT;
+            String replace = enumFormat(statistic.name(), true).replace(" ", "");
+            replace = replace.substring(0, 1).toLowerCase() + replace.substring(1);
+            MessagePart part = new MessagePart();
+            part.text = "stat." + replace;
+            value = new MessagePart[]{part};
+        }
+    }
+
+    private static class HoverEventSerializer implements JsonSerializer<HoverEvent> {
         /**
-         * @return This {@link MessageEvent} in JSON form
+         * Gson invokes this call-back method during serialization when it encounters a field of the
+         * specified type.
+         * <p>
+         * <p>In the implementation of this call-back method, you should consider invoking
+         * {@link JsonSerializationContext#serialize(Object, Type)} method to create JsonElements for any
+         * non-trivial field of the {@code src} object. However, you should never invoke it on the
+         * {@code src} object itself since that will cause an infinite loop (Gson will call your
+         * call-back method again).</p>
+         *
+         * @param src the object that needs to be converted to Json.
+         * @param typeOfSrc the actual type (fully genericized version) of the source object.
+         * @param context The context
+         *
+         * @return a JsonElement corresponding to the specified object.
          */
-        @SuppressWarnings("WeakerAccess")
-        public JsonObject toJSON() {
-            JsonObject obj = new JsonObject();
-            obj.addProperty("action", action);
-            if (value instanceof JsonElement) {
-                obj.add("value", (JsonElement) value);
+        @Override
+        public JsonElement serialize(HoverEvent src, Type typeOfSrc, JsonSerializationContext context) {
+            JsonObject serialized = new JsonObject();
+            serialized.add("action", context.serialize(src.action));
+            if (src.itemValue == null) {
+                serialized.add("value", context.serialize(src.value));
             }
             else {
-                obj.addProperty("value", value.toString());
+                serialized.add("value", context.serialize(src.itemValue));
             }
-            return obj;
+            return serialized;
         }
-
-        /**
-         * @return the action
-         */
-        @SuppressWarnings("unused")
-        public String getAction() {
-            return action;
-        }
-
-        /**
-         * @param action the action to set
-         */
-        @SuppressWarnings("unused")
-        public void setAction(String action) {
-            this.action = action;
-        }
-
-        /**
-         * @return the value
-         */
-        @SuppressWarnings("unused")
-        public Object getValue() {
-            return value;
-        }
-
-        /**
-         * @param value the value to set
-         */
-        @SuppressWarnings("unused")
-        public void setValue(Object value) {
-            this.value = value;
-        }
-
     }
-    // </editor-fold>
 
-    // <editor-fold desc="ClickEvent">
-    public static class ClickEvent {
+    private static class ClickEvent {
+        @SuppressWarnings("unused")
+        private ClickAction action;
+        @SuppressWarnings("unused")
+        private String value;
 
-        /**
-         * Runs a command.
-         *
-         * @param cmd the command to run
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent runCommand(String cmd) {
-            return new MessageEvent("run_command", cmd);
-        }
-
-        /**
-         * Suggests a command by putting inserting it in chat.
-         *
-         * @param cmd the command to suggest
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent suggestCommand(String cmd) {
-            return new MessageEvent("suggest_command", cmd);
-        }
-
-        /**
-         * Requires web links to be enabled on the client.
-         *
-         * @param url the url to open
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent openURL(String url) {
-            return new MessageEvent("open_url", url);
-        }
-
-        /**
-         * Only used with written books.
-         *
-         * @param page the page to switch to
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent changePage(int page) {
-            return new MessageEvent("change_page", page);
-        }
-
-    }
-    // </editor-fold>
-
-    // <editor-fold desc="HoverEvent">
-    public static class HoverEvent {
-
-        /**
-         * Shows text when you hover over it
-         *
-         * @param text the text to show
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent showText(String text) {
-            return new MessageEvent("show_text", text);
-        }
-
-        /**
-         * Shows text when you hover over it
-         *
-         * @param message the JSON message to show
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent showText(JSONMessage message) {
-            JsonArray arr = new JsonArray();
-            arr.add(new JsonPrimitive(""));
-            arr.add(message.toJSON());
-            return new MessageEvent("show_text", arr);
-        }
-
-        /**
-         * Shows an achievement when you hover over it
-         *
-         * @param id the id over the achievement
-         *
-         * @return The MessageEvent
-         */
-        @SuppressWarnings("WeakerAccess")
-        public static MessageEvent showAchievement(String id) {
-            return new MessageEvent("show_achievement", id);
-        }
-
-    }
-    // </editor-fold>
-
-    // <editor-fold desc="ReflectionHelper">
-    private static class ReflectionHelper {
-
-        private static Class<?> craftPlayer;
-
-        private static Constructor<?> chatComponentText;
-        private static Class<?> packetPlayOutChat;
-        private static Class<?> packetPlayOutTitle;
-        private static Class<?> iChatBaseComponent;
-        private static Class<?> titleAction;
-
-        private static Field connection;
-        private static Method getHandle;
-        private static Method sendPacket;
-        private static Method stringToChat;
-
-        private static Object actionTitle;
-        private static Object actionSubtitle;
-
-        private static String version;
-
-        private static boolean SETUP = false;
-
-        static {
-
-            if (!SETUP) {
-
-                String[] split = Bukkit.getServer().getClass().getPackage().getName().split("\\.");
-                version = split[split.length - 1];
-
-                try {
-
-                    SETUP = true;
-
-                    craftPlayer = getClass("{obc}.entity.CraftPlayer");
-                    getHandle = craftPlayer.getMethod("getHandle");
-                    connection = getHandle.getReturnType().getField("playerConnection");
-                    sendPacket = connection.getType().getMethod("sendPacket", getClass("{nms}.Packet"));
-
-                    chatComponentText = getClass("{nms}.ChatComponentText").getConstructor(String.class);
-
-                    iChatBaseComponent = getClass("{nms}.IChatBaseComponent");
-
-                    if (getVersion() > 7) {
-                        stringToChat = getClass("{nms}.IChatBaseComponent$ChatSerializer").getMethod("a", String.class);
-                    }
-                    else {
-                        stringToChat = getClass("{nms}.ChatSerializer").getMethod("a", String.class);
-                    }
-
-                    packetPlayOutChat = getClass("{nms}.PacketPlayOutChat");
-                    packetPlayOutTitle = getClass("{nms}.PacketPlayOutTitle");
-
-                    titleAction = getClass("{nms}.PacketPlayOutTitle$EnumTitleAction");
-
-                    actionTitle = titleAction.getField("TITLE").get(null);
-                    actionSubtitle = titleAction.getField("SUBTITLE").get(null);
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    SETUP = false;
-                }
-
+        void runCommand(String command) {
+            if (command.length() > 256) {
+                throw new IllegalArgumentException("The command must be <= 256 chars");
             }
-
+            action = ClickAction.RUN_COMMAND;
+            value = command;
         }
 
-        @SuppressWarnings("WeakerAccess")
-        public static void sendPacket(Object packet, Player... players) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
+        void suggestCommand(String command) {
+            action = ClickAction.SUGGEST_COMMAND;
+            value = command;
+        }
+
+        void openUrl(String url) {
+            action = ClickAction.OPEN_URL;
+            value = StringEscapeUtils.escapeJson(url);
+        }
+
+        void changePage(int newPage) {
+            value = Integer.toString(newPage);
+            action = ClickAction.CHANGE_PAGE;
+        }
+    }
+
+    private static class AnonymousClassesFactory <U> implements TypeAdapterFactory {
+
+        private BiFunction<Gson, TypeToken<U>, TypeAdapter<U>> createToken;
+        private Class<U> targetClass;
+
+        AnonymousClassesFactory(Class<U> targetClass, BiFunction<Gson, TypeToken<U>, TypeAdapter<U>> createToken) {
+            this.createToken = createToken;
+            this.targetClass = targetClass;
+        }
+
+        /**
+         * Returns a type adapter for {@code type}, or null if this factory doesn't
+         * support {@code type}.
+         *
+         * @param gson The gson instance
+         * @param type The type
+         */
+        @Override
+        public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
+            if (!type.getRawType().isAnonymousClass()) {
+                return null;
             }
-            if (packet == null) {
+            if (type.getRawType().getSuperclass() != targetClass) {
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            TypeToken<U> typeToken = (TypeToken<U>) type;
+            @SuppressWarnings("unchecked")
+            TypeAdapter<T> result = (TypeAdapter<T>) createToken.apply(gson, typeToken);
+
+            return result;
+        }
+    }
+
+    private static class EnumSerializer <T extends Enum<T>> extends TypeAdapter<T> {
+
+        private Function<Enum<T>, String> converter = Enum::toString;
+
+        EnumSerializer() {
+        }
+
+        EnumSerializer(Function<Enum<T>, String> converter) {
+            this.converter = converter;
+        }
+
+        /**
+         * Writes one JSON value (an array, object, string, number, boolean or null)
+         * for {@code value}.
+         *
+         * @param out The {@link JsonWriter}
+         * @param value the Java object to write. May be null.
+         */
+        @Override
+        public void write(JsonWriter out, T value) throws IOException {
+            if (value == null) {
+                out.nullValue();
                 return;
             }
-
-            for (Player player : players) {
-                try {
-                    sendPacket.invoke(connection.get(getHandle.invoke(player)), packet);
-                } catch (Exception e) {
-                    System.err.println("Failed to send packet");
-                    e.printStackTrace();
-                }
-            }
-
+            out.value(converter.apply(value));
         }
 
-        @SuppressWarnings("WeakerAccess")
-        public static Object createActionbarPacket(String message) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            Object packet = createTextPacket(message);
-            set("b", packet, (byte) 2);
-            return packet;
+        /**
+         * Reads one JSON value (an array, object, string, number, boolean or null)
+         * and converts it to a Java object. Returns the converted object.
+         *
+         * @param in The {@link JsonReader}
+         *
+         * @return the converted Java object. May be null.
+         */
+        @Override
+        public T read(JsonReader in) throws IOException {
+            return null;
         }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object createTextPacket(String message) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                Object packet = packetPlayOutChat.newInstance();
-                set("a", packet, fromJson(message));
-                set("b", packet, (byte) 1);
-                return packet;
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object createTitlePacket(String message) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                return packetPlayOutTitle.getConstructor(titleAction, iChatBaseComponent)
-                        .newInstance(actionTitle, fromJson(message));
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object createSubtitlePacket(String message) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                return packetPlayOutTitle.getConstructor(titleAction, iChatBaseComponent)
-                        .newInstance(actionSubtitle, fromJson(message));
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object createTitleTimesPacket(int fadeIn, int stay, int fadeOut) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                return packetPlayOutTitle.getConstructor(int.class, int.class, int.class)
-                        .newInstance(fadeIn, stay, fadeOut);
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object componentText(String msg) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                return chatComponentText.newInstance(msg);
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Object fromJson(String json) {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            if (!json.trim().startsWith("{")) {
-                return componentText(json);
-            }
-
-            try {
-                return stringToChat.invoke(null, json);
-            } catch (Exception e) {
-                e.printStackTrace();
-                return null;
-            }
-
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static Class<?> getClass(String path) throws ClassNotFoundException {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            return Class.forName(path.replace("{nms}", "net.minecraft.server." + version)
-                    .replace("{obc}", "org.bukkit.craftbukkit." + version));
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static void set(String field, Object o, Object v) {
-            try {
-                Field f = o.getClass().getDeclaredField(field);
-                f.setAccessible(true);
-                f.set(o, v);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-
-        @SuppressWarnings("WeakerAccess")
-        public static int getVersion() {
-            if (!SETUP) {
-                throw new IllegalStateException("ReflectionHelper is not set up!");
-            }
-            try {
-                return Integer.parseInt(version.split("_")[1]);
-            } catch (NumberFormatException e) {
-                e.printStackTrace();
-                return 10;
-            }
-
-        }
-
     }
-    // </editor-fold>
-    // </editor-fold>
-
 }

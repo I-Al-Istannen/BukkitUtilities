@@ -132,7 +132,7 @@ public class TextUtils {
         Objects.requireNonNull(text, "text can not be null");
 
         if (!upperCaseAfterSpace) {
-            return Character.toUpperCase(text.charAt(0)) + text.toLowerCase().replace("_", " ");
+            return Character.toUpperCase(text.charAt(0)) + text.toLowerCase().substring(1).replace("_", " ");
         }
         StringBuilder result = new StringBuilder();
         boolean upperCase = true;

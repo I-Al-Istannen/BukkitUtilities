@@ -30,6 +30,7 @@
         <module>Packet</module>
         <module>Command</module>
         <module>Updater</module>
+        <module>SharedCoreClasses</module>
     </modules>
 
     <repositories>
