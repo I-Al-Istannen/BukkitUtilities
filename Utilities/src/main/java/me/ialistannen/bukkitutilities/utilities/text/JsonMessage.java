@@ -42,7 +42,7 @@ import static me.ialistannen.bukkitutilities.utilities.text.TextUtils.enumFormat
 /**
  * A class to deal with JSON Messages
  */
-public class JSONMessages {
+public class JsonMessage {
 
     private static Class<?> CRAFT_ITEM_STACK = ReflectionUtil.getClass(OBC, "inventory.CraftItemStack")
             .orElseThrow(() -> new RuntimeException("Could not find the 'CraftItemStack' class"));
