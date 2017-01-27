@@ -382,7 +382,7 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
             //"--depth=", "--page=", "--entriesPerPage=", "--showUsage=",
             //"--search=", "--regex=", "--explanation
             List<String> defaultMessage = new ArrayList<>();
-            defaultMessage.add("\n&a&l+&8&m-----------------&8 &a&lArguments &8&m------------------&a&l+\n ");
+            defaultMessage.add("\n&a&l+&8&m--------------&8 &a&lArguments &8&m----------------&a&l+\n ");
             addExplanation(
                     "--page=<number>",
                     "Selects a help page",
