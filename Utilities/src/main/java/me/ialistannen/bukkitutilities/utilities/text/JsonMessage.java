@@ -135,6 +135,10 @@ public class JsonMessage {
         private List<MessagePart> parts = new ArrayList<>();
         private MessagePart current = new MessagePart();
 
+        private MessageBuilder() {
+
+        }
+
         /**
          * Adds an empty text part
          *
@@ -257,7 +261,7 @@ public class JsonMessage {
          * @return This builder
          */
         @SuppressWarnings("unused")
-        public MessageBuilder bold(boolean bold) {
+        public MessageBuilder bold(@SuppressWarnings("SameParameterValue") boolean bold) {
             current.setBold(bold);
             return this;
         }
