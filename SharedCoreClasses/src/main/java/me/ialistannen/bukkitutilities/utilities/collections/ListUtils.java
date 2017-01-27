@@ -1,5 +1,6 @@
 package me.ialistannen.bukkitutilities.utilities.collections;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -42,7 +43,7 @@ public class ListUtils {
     public static List<String> colorList(@Nonnull List<String> list) {
         Objects.requireNonNull(list, "list can not be null");
 
-        return list.stream().map(TextUtils::colorize).collect(Collectors.toList());
+        return list.stream().map(TextUtils::colorize).collect(Collectors.toCollection(ArrayList::new));
     }
 
     /**
@@ -57,7 +58,7 @@ public class ListUtils {
     public static List<String> stripColors(@Nonnull List<String> list) {
         Objects.requireNonNull(list, "list can not be null");
 
-        return list.stream().map(TextUtils::stripColor).collect(Collectors.toList());
+        return list.stream().map(TextUtils::stripColor).collect(Collectors.toCollection(ArrayList::new));
     }
 
     /**

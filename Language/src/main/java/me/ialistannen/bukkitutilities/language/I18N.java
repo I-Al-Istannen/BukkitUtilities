@@ -436,6 +436,11 @@ public class I18N implements MessageProvider {
     }
 
     @Override
+    public boolean hasKeyCategory(@Nonnull String key, @Nonnull String category) {
+        return translateOrEmpty(key, category).isPresent();
+    }
+
+    @Override
     public String getDefaultCategory() {
         return defaultCategory;
     }

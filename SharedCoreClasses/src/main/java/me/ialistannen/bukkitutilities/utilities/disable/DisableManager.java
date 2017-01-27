@@ -1,5 +1,6 @@
 package me.ialistannen.bukkitutilities.utilities.disable;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -26,14 +27,14 @@ public class DisableManager implements Listener {
     private final Set<DisableListener> weakListener = Collections.newSetFromMap(new WeakHashMap<>());
 
     @SuppressWarnings("unused")
-    private final Plugin plugin;
+    private final WeakReference<Plugin> plugin;
 
     /**
      * @param plugin The owning plugin
      */
     @SuppressWarnings("unused")
     public DisableManager(Plugin plugin) {
-        this.plugin = plugin;
+        this.plugin = new WeakReference<>(plugin);
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
@@ -95,7 +96,7 @@ public class DisableManager implements Listener {
 
     @EventHandler
     public void onDisable(PluginDisableEvent event) {
-        if (event.getPlugin().equals(plugin)) {
+        if (event.getPlugin().equals(plugin.get())) {
             disable();
         }
     }

@@ -2,22 +2,30 @@ package me.ialistannen.bukkitutilities.command;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.bukkit.permissions.Permission;
 
 import me.ialistannen.bukkitutilities.language.MessageProvider;
+import me.ialistannen.bukkitutilities.utilities.collections.ListUtils;
+import me.ialistannen.bukkitutilities.utilities.text.JsonMessage;
 import me.ialistannen.bukkitutilities.utilities.text.Pager;
 import me.ialistannen.bukkitutilities.utilities.text.Pager.Options;
 import me.ialistannen.bukkitutilities.utilities.text.Pager.Page;
@@ -96,7 +104,7 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
     @Override
     public List<String> tabComplete(CommandSender sender, List<String> wholeChat, int relativeIndex) {
         return Arrays.asList("--depth=", "--page=", "--entriesPerPage=", "--showUsage=",
-                "--search=", "--regex="); // , "--contains=", "--regexFind=",
+                "--search=", "--regex=", "--explanation"); // , "--contains=", "--regexFind=",
         // "--regexMatch=", "--regexMatchCI="
     }
 
@@ -105,6 +113,11 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
         Options options = parser.parse(args);
         AtomicInteger depth = new AtomicInteger(10);
         AtomicBoolean showUsage = new AtomicBoolean(false);
+
+        if (args.length > 0 && args[0].equalsIgnoreCase("--explanation")) {
+            new HelpExplanationSender().sendHelp(sender);
+            return CommandResult.SUCCESSFULLY_INVOKED;
+        }
 
         for (String argument : args) {
             if (argument.matches("--depth=.+")) {
@@ -136,8 +149,52 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
         Page page = Pager.getPageFromFilterable(options, filterable);
 
         page.send(sender, getMessageProvider());
+        if (sender instanceof Player) {
+            // @formatter:off
+            JsonMessage
+                    .create("                    ")
+                    .next()
+                    .text("Help explanation")
+                    .color(ChatColor.DARK_AQUA)
+                    .bold(true)
+                    .hover()
+                        .displayText(
+                            JsonMessage.create("Shows the arguments for the help command.\n")
+                                    .bold(true)
+                                    .color(ChatColor.GREEN)
+                                    .next("Just add them behind the help command, separated by spaces")
+                                    .bold(true)
+                                    .color(ChatColor.GREEN)
+                                    .build()
+                        )
+                        .build()
+                    .click()
+                        .runCommand("/"
+                                + getHelpCommandString(commandTree.getRoot(), new LinkedList<>())
+                                + " --explanation")
+                        .build()
+                    .build()
+                    .send((Player) sender);
+            // @formatter:on
+        }
 
         return CommandResult.SUCCESSFULLY_INVOKED;
+    }
+
+    private String getHelpCommandString(CommandNode node, Queue<String> current) {
+        if (node == this) {
+            return String.join(" ", current);
+        }
+        for (CommandNode commandNode : node.getChildren()) {
+            Queue<String> queue = new LinkedList<>(current);
+            queue.add(commandNode.getKeyword());
+            String helpCommandString = getHelpCommandString(commandNode, queue);
+            if (helpCommandString != null) {
+                return helpCommandString;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -226,13 +283,13 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
                     String key = "command.help.format.with.usage";
                     finalString = language.translateOrDefault(key,
                             "&3{0}&9: &7{1} &7<&6{2}&7><newline>  &cUsage: {3}",
-                            new Object[]{node.getName(), node.getDescription(), childrenAmount, node.getUsage()});
+                            node.getName(), node.getDescription(), childrenAmount, node.getUsage());
                 }
                 else {
                     String key = "command.help.format.without.usage";
                     finalString = language.translateOrDefault(key,
                             "&3{0}&9: &7{1} &7<&6{2}&7>",
-                            new Object[]{node.getName(), node.getDescription(), childrenAmount, node.getUsage()});
+                            node.getName(), node.getDescription(), childrenAmount, node.getUsage());
                 }
                 finalString = colorize(finalString);
             }
@@ -290,6 +347,90 @@ public class DefaultHelpCommand extends TranslatedCommandNode {
                     ", allLines=" + getAllLines() +
                     '}';
         }
+    }
+
+    private class HelpExplanationSender {
+
+        private final String LANG_KEY = "command.help.explanation";
+
+        /**
+         * Sends the explanation to a {@link CommandSender}
+         *
+         * @param commandSender The {@link CommandSender} to send it to
+         */
+        void sendHelp(CommandSender commandSender) {
+            commandSender.sendMessage(getMessage().toArray(new String[0]));
+        }
+
+        Collection<String> getMessage() {
+            MessageProvider lang = getMessageProvider();
+            if (lang.hasKey(LANG_KEY)) {
+                Object object = lang.translateObject(LANG_KEY);
+                if (object.getClass().isArray()) {
+                    Object[] array = (Object[]) object;
+                    return Arrays.stream(array).map(Objects::toString).collect(Collectors.toList());
+                }
+                else if (object instanceof Iterable) {
+                    Iterable<?> iterable = (Iterable<?>) object;
+                    return iteratorToString(iterable.iterator());
+                }
+                else if (object instanceof Iterator) {
+                    return iteratorToString((Iterator<?>) object);
+                }
+            }
+
+            //"--depth=", "--page=", "--entriesPerPage=", "--showUsage=",
+            //"--search=", "--regex=", "--explanation
+            List<String> defaultMessage = new ArrayList<>();
+            defaultMessage.add("\n&a&l+&8&m-----------------&8 &a&lArguments &8&m------------------&a&l+\n ");
+            addExplanation(
+                    "--page=<number>",
+                    "Selects a help page",
+                    defaultMessage
+            );
+            addExplanation(
+                    "--showUsage=<true|false>",
+                    "Whether to show the command usage",
+                    defaultMessage
+            );
+            addExplanation(
+                    "--entriesPerPage=<number>",
+                    "The entries to show on one page",
+                    defaultMessage
+            );
+            addExplanation(
+                    "--search=<query>",
+                    "Filters the results. Can not contain spaces",
+                    defaultMessage
+            );
+            addExplanation(
+                    "--regex=<query>",
+                    "Filters the results using a regex. Can not contain spaces",
+                    defaultMessage
+            );
+            addExplanation(
+                    "--depth=<number>",
+                    "The amount of child-levels to show.",
+                    defaultMessage
+            );
+            defaultMessage.add("\n&a&l+&8&m------------------------------------------&a&l+\n ");
+            return ListUtils.colorList(defaultMessage);
+        }
+
+        private void addExplanation(String option, String explanation, List<String> targetList) {
+            targetList.add(" &3" + option + "&9:");
+            targetList.add(" &7  " + explanation);
+        }
+
+        private Collection<String> iteratorToString(Iterator<?> iterator) {
+            Collection<String> list = new ArrayList<>();
+            while (iterator.hasNext()) {
+                Object o = iterator.next();
+                list.add(Objects.toString(o));
+            }
+            return list;
+        }
+
     }
 
     /**

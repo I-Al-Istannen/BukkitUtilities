@@ -101,7 +101,7 @@ public class JsonMessage {
         /**
          * @return The JSON String
          */
-        @SuppressWarnings("unused")
+        @SuppressWarnings({"unused", "WeakerAccess"})
         public String getJson() {
             String s = GSON.toJson(builder.parts);
             // **** You gson. I do not care about script tags!
@@ -693,6 +693,9 @@ public class JsonMessage {
         }
 
         void addExtras(Collection<MessagePart> part) {
+            if (extra == null) {
+                extra = new ArrayList<>();
+            }
             extra.addAll(part);
         }
     }
@@ -700,7 +703,7 @@ public class JsonMessage {
     private static class HoverEvent {
         private HoverAction action;
         private MessagePart[] value;
-        private String itemValue;
+        private String directValue;
 
         void displayItem(ItemStack item) {
             action = HoverAction.SHOW_ITEM;
@@ -711,7 +714,7 @@ public class JsonMessage {
                     .getValueOrThrow("Could not invoke 'save' method");
 
             String string = savedTag.toString();
-            itemValue = StringEscapeUtils.escapeJson(string);
+            directValue = StringEscapeUtils.escapeJson(string);
         }
 
         void displayText(String text) {
@@ -741,9 +744,7 @@ public class JsonMessage {
             }
 
             String escapedId = StringEscapeUtils.escapeJson(id);
-            MessagePart part = new MessagePart();
-            part.text = "\"{name:" + escapedName + ",type:" + escapedType + ",id:" + escapedId + "}\"";
-            value = new MessagePart[]{part};
+            directValue = "{name:" + escapedName + ",type:" + escapedType + ",id:" + escapedId + "}";
         }
 
         void displayAchievement(Achievement achievement) {
@@ -786,11 +787,11 @@ public class JsonMessage {
         public JsonElement serialize(HoverEvent src, Type typeOfSrc, JsonSerializationContext context) {
             JsonObject serialized = new JsonObject();
             serialized.add("action", context.serialize(src.action));
-            if (src.itemValue == null) {
+            if (src.directValue == null) {
                 serialized.add("value", context.serialize(src.value));
             }
             else {
-                serialized.add("value", context.serialize(src.itemValue));
+                serialized.add("value", context.serialize(src.directValue));
             }
             return serialized;
         }

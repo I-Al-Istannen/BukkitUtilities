@@ -161,6 +161,29 @@ public interface MessageProvider {
     }
 
     /**
+     * Checks if a given key exists
+     *
+     * @param key The key to check
+     *
+     * @return true if the key exists
+     *
+     * @see #hasKeyCategory(String, String)
+     */
+    default boolean hasKey(@Nonnull String key) {
+        return hasKeyCategory(key, getDefaultCategory());
+    }
+
+    /**
+     * Checks if a given key exists
+     *
+     * @param key The key to check
+     * @param category The category it belongs to
+     *
+     * @return true if the key exists
+     */
+    boolean hasKeyCategory(@Nonnull String key, @Nonnull String category);
+
+    /**
      * Sets the default category used by the shortened methods.
      *
      * @param categoryName The new default category.
