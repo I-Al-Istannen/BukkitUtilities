@@ -25,11 +25,6 @@
             <version>1.0.0-SNAPSHOT</version>
         </dependency>
         <dependency>
-            <groupId>org.spigotmc</groupId>
-            <artifactId>spigot</artifactId>
-            <version>1.10.2-R0.1-SNAPSHOT</version>
-        </dependency>
-        <dependency>
             <groupId>me.ialistannen</groupId>
             <artifactId>Particle</artifactId>
             <version>1.0.0-SNAPSHOT</version>
@@ -38,6 +33,11 @@
             <groupId>me.ialistannen</groupId>
             <artifactId>CorePlugin</artifactId>
             <version>1.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+            <version>4.1.6.Final</version>
         </dependency>
     </dependencies>
 

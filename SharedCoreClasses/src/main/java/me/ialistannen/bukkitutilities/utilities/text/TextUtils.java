@@ -126,7 +126,7 @@ public class TextUtils {
      * @return The formatted Text
      */
     // @formatter:on
-    @SuppressWarnings("unused")
+    @SuppressWarnings("WeakerAccess")
     @Nonnull
     public static String enumFormat(@Nonnull String text, boolean upperCaseAfterSpace) {
         Objects.requireNonNull(text, "text can not be null");
